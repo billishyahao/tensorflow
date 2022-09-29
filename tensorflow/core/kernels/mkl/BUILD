@@ -234,7 +234,22 @@ tf_cc_test_mkl(
     size = "small",
     srcs = ["mkl_relu_op_test.cc"],
     linkstatic = 1,  # Fixes dyld error on MacOS.
-    deps = ["@com_google_absl//absl/strings"] + MKL_TEST_DEPS,
+    deps = [
+        "@com_google_absl//absl/strings",
+        ":mkl_relu_op"
+    ] + MKL_TEST_DEPS,
+)
+
+
+tf_cc_test_mkl(
+    name = "mkl_mul_op_test",
+    size = "small",
+    srcs = ["mkl_mul_op_test.cc"],
+    linkstatic = 1,  # Fixes dyld error on MacOS.
+    deps = [
+        "@com_google_absl//absl/strings",
+        ":mkl_mul_op"
+    ] + MKL_TEST_DEPS,
 )
 
 tf_cc_test_mkl(
@@ -318,6 +333,15 @@ tf_cc_test_mkl(
 tf_mkl_kernel_library(
     name = "mkl_relu_op",
     prefix = "mkl_relu",
+    deps = MKL_DEPS,
+)
+
+
+tf_mkl_kernel_library(
+    name = "mkl_mul_op",
+    srcs = [
+        "mkl_mul_op.cc",
+    ],
     deps = MKL_DEPS,
 )
 

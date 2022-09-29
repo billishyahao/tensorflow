@@ -3014,6 +3014,7 @@ tf_cc_test_mkl(
         "//tensorflow/core/kernels/mkl:mkl_qmatmul_op",
         "//tensorflow/core/kernels/mkl:mkl_quantize_op",
         "//tensorflow/core/kernels/mkl:mkl_relu_op",
+        "//tensorflow/core/kernels/mkl:mkl_mul_op",
         "//tensorflow/core/kernels/mkl:mkl_reshape_op",
         "//tensorflow/core/kernels/mkl:mkl_slice_op",
         "//tensorflow/core/kernels/mkl:mkl_softmax_op",

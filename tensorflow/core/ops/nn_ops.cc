@@ -2100,6 +2100,28 @@ NOTE Do not invoke this operator directly in Python. Graph rewrite pass is
 expected to invoke these operators.
 )doc");
 
+
+
+// Note: This op is not commutative w.r.t. to all its inputs.
+REGISTER_OP("_MklOneDNNMul")
+    // .BINARY_MORE()
+    .Input("input_a: T")
+    .Input("input_b: T")
+    .Input("mkl_input_a: uint8")
+    .Input("mkl_input_b: uint8")
+    .Output("output: T")
+    .Output("mkl_output: uint8")
+    .Attr("T: {float, bfloat16} = DT_FLOAT")
+    .SetShapeFn(shape_inference::UnchangedShape)
+    // .SetShapeFn(shape_inference::BroadcastBinaryOpShapeFn)
+    .Doc(R"doc(
+Returns x * y element-wise.
+
+*NOTE*: `Mul` supports broadcasting. More about broadcasting
+[here](http://docs.scipy.org/doc/numpy/user/basics.broadcasting.html)
+)doc");
+
+
 REGISTER_OP("_MklRelu")
     .Input("features: T")
     .Input("mkl_features: uint8")
