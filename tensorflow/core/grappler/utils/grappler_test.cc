@@ -126,6 +126,40 @@ std::vector<Tensor> GrapplerTest::EvaluateNodes(
   return output_tensors;
 }
 
+
+std::vector<Tensor> GrapplerTest::BenchmarkNodes(
+    const GraphDef& graph, const std::vector<string>& node_names,
+    const std::vector<std::pair<string, Tensor>>& inputs) const {
+  
+  SessionOptions options;
+  options.config.set_inter_op_parallelism_threads(8);
+  options.config.set_intra_op_parallelism_threads(16);
+
+  // SessionOptions opts;
+  // opts.config.set_intra_op_parallelism_threads(1);
+  // opts.config.set_inter_op_parallelism_threads(1);
+  // options_.config.mutable_graph_options()->set_intra_op_parallelism_threads(56);
+
+  std::unique_ptr<tensorflow::Session> session(NewSession(options));
+  TF_CHECK_OK(session->Create(graph));
+  RunOptions run_options;
+  std::vector<Tensor> output_tensors;
+  int loop = 1000;
+  std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+  for (int i=0; i<loop; i++) {
+    TF_CHECK_OK(session->Run(run_options, inputs, node_names, node_names,
+                           &output_tensors, nullptr));
+  }
+  std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+  std::cout << "Average Latency = " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()/loop << "[µs]" << std::endl;
+  // std::cout << "Average Latency = " << std::chrono::duration_cast<std::chrono::nanoseconds> (end - begin).count()/loop << "[ns]" << std::endl;
+
+  TF_CHECK_OK(session->Close());
+  return output_tensors;
+}
+
+
+
 std::vector<Tensor> GrapplerTest::EvaluateFetchNodes(
     const GrapplerItem& item) const {
   std::unique_ptr<tensorflow::Session> session(NewSession(options_));

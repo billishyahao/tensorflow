@@ -17,6 +17,7 @@ limitations under the License.
 #define TENSORFLOW_CORE_GRAPPLER_UTILS_GRAPPLER_TEST_H_
 
 #include <vector>
+#include <chrono>
 
 #include "absl/strings/string_view.h"
 #include "tensorflow/cc/framework/scope.h"
@@ -44,6 +45,10 @@ class GrapplerTest : public ::testing::Test {
       const GraphDef& graph, const std::vector<string>& node_names) const;
 
   std::vector<Tensor> EvaluateNodes(
+      const GraphDef& graph, const std::vector<string>& node_names,
+      const std::vector<std::pair<string, Tensor>>& inputs) const;
+
+  std::vector<Tensor> BenchmarkNodes(
       const GraphDef& graph, const std::vector<string>& node_names,
       const std::vector<std::pair<string, Tensor>>& inputs) const;
 
