@@ -202,28 +202,8 @@ class SubGraphMatcher {
   // potential matched nodes (i.e. when DoesOpTypePatternMatch returns "true").
   // It performs a sanity check if the candidate nodes for removal in subgraph
   // fusion is indeed safe to remove.
-  bool IsSafeNodesToRemove(
-      const std::unordered_set<string>& nodes_to_preserve) {
-    for (const auto& node_idx : remove_node_indices_) {
-      auto node_view = graph_view_->GetNode(node_idx);
-      // Check if the node to be removed is in the nodes to be preserved.
-      string node_name = node_view->GetName();
-      if (nodes_to_preserve.count(node_name) > 0) return false;
-      // Traverse all the Regular Fanouts. Fanouts are stored as vector of
-      // vector, std::vector<std::vector<MutableFaninView>>. Note that
-      // a MutableNodeView's fanouts are stored in a nested vector of
-      // MutableFaninView type.
-      auto fanouts_by_ports = node_view->GetRegularFanouts();
-      for (const auto& fanouts : fanouts_by_ports) {
-        for (const auto& fanout : fanouts) {
-          if (!matched_node_indices_.count(fanout.node_index())) {
-            return false;
-          }
-        }
-      }
-    }
-    return true;
-  }
+  bool IsSafeNodesToRemove(const std::unordered_set<string>& nodes_to_preserve);
+
 };
 
 }  // namespace utils
