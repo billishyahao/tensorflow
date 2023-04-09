@@ -1541,8 +1541,8 @@ bool FindTowerMatmul(RemapperContext* ctx, int node_index,
   //     !RuntimeFusionEnabled(cluster))
   //   return false;
 
-  string graph_string;
-  std::cout << "hebi-dbg: entering  findtowerdense find pattern in: " << ctx->graph_view.graph()->DebugString() << "\n";
+  // string graph_string;
+  // std::cout << "hebi-dbg: entering  findtowerdense find pattern in: " << ctx->graph_view.graph()->DebugString() << "\n";
 
   using utils::MatchingDirection;
   using utils::NodeStatus;
@@ -1553,7 +1553,7 @@ bool FindTowerMatmul(RemapperContext* ctx, int node_index,
 
   // clang-format off
 
-  int tower_num = 2;
+  int tower_num = 8;
 
   // utils::OpTypePattern sub_tower_matmul_pattern0 = GenSubTowerMatmulPatternFollowOutputs(0);
   // utils::OpTypePattern sub_tower_matmul_pattern1 = GenSubTowerMatmulPatternFollowOutputs(1);
@@ -2974,10 +2974,10 @@ Status AddFusedTowerMatmulBMMVer(
   }
 
   
-  std::vector<NodeDef> bias_0_list;
-  for (int i=0; i<tower_count; i++) {
-    bias_0_list.push_back(*ctx->graph_view.GetNode(matched_nodes_map.at(absl::StrCat("bias_0_", i)))->node());
-  }
+  // std::vector<NodeDef> bias_0_list;
+  // for (int i=0; i<tower_count; i++) {
+  //   bias_0_list.push_back(*ctx->graph_view.GetNode(matched_nodes_map.at(absl::StrCat("bias_0_", i)))->node());
+  // }
 
   std::vector<NodeDef> relu_1_list;
   for (int i=0; i<tower_count; i++) {
@@ -2988,6 +2988,8 @@ Status AddFusedTowerMatmulBMMVer(
   std::cout << "hebi-dbg: AddFusedTowerMatmulBMMVer finish extracting node...\n";
 
 
+  // layer #0
+  // TODO: add support for bias and relu activation
 
   NodeDef filterall_pack_node_0;
   filterall_pack_node_0.set_op("Pack");
@@ -3002,30 +3004,57 @@ Status AddFusedTowerMatmulBMMVer(
   std::cout << "hebi-dbg: filterall_pack_node_0: " << filterall_pack_node_0.DebugString() << "\n";
 
 
-  NodeDef biasall_pack_node_0;
-  biasall_pack_node_0.set_op("Pack");
-  biasall_pack_node_0.set_name("pack_bias_0");
-  biasall_pack_node_0.set_device(matmul_0_list.at(0).device());
-  for (int i=0; i<tower_count; i++) {
-    biasall_pack_node_0.add_input(bias_0_list.at(i).input(1));
-  }
-  AddNodeAttr("N", tower_count, &biasall_pack_node_0);
-  AddNodeAttr("T", DT_FLOAT, &biasall_pack_node_0);
-  AddNodeAttr("axis", 0, &biasall_pack_node_0);
-  std::cout << "hebi-dbg: biasall_pack_node_0: " << biasall_pack_node_0.DebugString() << "\n";
+  // NodeDef biasall_pack_node_0;
+  // biasall_pack_node_0.set_op("Pack");
+  // biasall_pack_node_0.set_name("pack_bias_0");
+  // biasall_pack_node_0.set_device(matmul_0_list.at(0).device());
+  // for (int i=0; i<tower_count; i++) {
+  //   biasall_pack_node_0.add_input(bias_0_list.at(i).input(1));
+  // }
+  // AddNodeAttr("N", tower_count, &biasall_pack_node_0);
+  // AddNodeAttr("T", DT_FLOAT, &biasall_pack_node_0);
+  // AddNodeAttr("axis", 0, &biasall_pack_node_0);
+  // std::cout << "hebi-dbg: biasall_pack_node_0: " << biasall_pack_node_0.DebugString() << "\n";
   
 
 
-  NodeDef batchmatmul_node;
-  batchmatmul_node.set_name("batch_matmul_0");
-  batchmatmul_node.set_op("BatchMatMulV2");
-  batchmatmul_node.set_device(matmul_0_list.at(0).device());
-  batchmatmul_node.add_input(matmul_0_list.at(0).input(0));
-  batchmatmul_node.add_input(filterall_pack_node_0.name());
-  AddNodeAttr("adj_x", false, &batchmatmul_node);
-  AddNodeAttr("adj_y", false, &batchmatmul_node);
-  AddNodeAttr("T", DT_FLOAT, &batchmatmul_node);
+  NodeDef batchmatmul_node_0;
+  batchmatmul_node_0.set_name("batch_matmul_0");
+  batchmatmul_node_0.set_op("BatchMatMulV2");
+  batchmatmul_node_0.set_device(matmul_0_list.at(0).device());
+  batchmatmul_node_0.add_input(matmul_0_list.at(0).input(0));
+  batchmatmul_node_0.add_input(filterall_pack_node_0.name());
+  AddNodeAttr("adj_x", false, &batchmatmul_node_0);
+  AddNodeAttr("adj_y", false, &batchmatmul_node_0);
+  AddNodeAttr("T", DT_FLOAT, &batchmatmul_node_0);
+  std::cout << "hebi-dbg: batchmatmul_node_0: " << batchmatmul_node_0.DebugString() << "\n";
 
+  // layer #1
+
+  NodeDef filterall_pack_node_1;
+  filterall_pack_node_1.set_op("Pack");
+  filterall_pack_node_1.set_name("pack_filter_1");
+  filterall_pack_node_1.set_device(matmul_1_list.at(0).device());
+  for (int i=0; i<tower_count; i++) {
+    filterall_pack_node_1.add_input(matmul_1_list.at(i).input(1));
+  }
+  AddNodeAttr("N", tower_count, &filterall_pack_node_1);
+  AddNodeAttr("T", DT_FLOAT, &filterall_pack_node_1);
+  AddNodeAttr("axis", 0, &filterall_pack_node_1);
+  std::cout << "hebi-dbg: filterall_pack_node_1: " << filterall_pack_node_1.DebugString() << "\n";
+  
+
+
+  NodeDef batchmatmul_node_1;
+  batchmatmul_node_1.set_name("batch_matmul_1");
+  batchmatmul_node_1.set_op("BatchMatMulV2");
+  batchmatmul_node_1.set_device(matmul_0_list.at(0).device());
+  batchmatmul_node_1.add_input("batch_matmul_0");
+  batchmatmul_node_1.add_input(filterall_pack_node_1.name());
+  AddNodeAttr("adj_x", false, &batchmatmul_node_1);
+  AddNodeAttr("adj_y", false, &batchmatmul_node_1);
+  AddNodeAttr("T", DT_FLOAT, &batchmatmul_node_1);
+  std::cout << "hebi-dbg: batchmatmul_node_1: " << batchmatmul_node_1.DebugString() << "\n";
 
 
 
@@ -3040,9 +3069,11 @@ Status AddFusedTowerMatmulBMMVer(
   Status status;
   mutation->AddNode(std::move(filterall_pack_node_0), &status);
   TF_RETURN_IF_ERROR(status);
-  mutation->AddNode(std::move(biasall_pack_node_0), &status);
+  mutation->AddNode(std::move(filterall_pack_node_1), &status);
   TF_RETURN_IF_ERROR(status);
-  mutation->AddNode(std::move(batchmatmul_node), &status);
+  mutation->AddNode(std::move(batchmatmul_node_0), &status);
+  TF_RETURN_IF_ERROR(status);
+  mutation->AddNode(std::move(batchmatmul_node_1), &status);
   TF_RETURN_IF_ERROR(status);
 
   for (int i=0; i<tower_count; i++) {
@@ -3051,9 +3082,9 @@ Status AddFusedTowerMatmulBMMVer(
     relu_1_node.set_op("Identity");
     relu_1_node.set_device(matmul_0_list.at(0).device());
     if (i==0) {
-      relu_1_node.add_input("batch_matmul_0");
+      relu_1_node.add_input("batch_matmul_1");
     } else {
-      relu_1_node.add_input("batch_matmul_0");
+      relu_1_node.add_input("batch_matmul_1");
       // relu_1.add_input(absl::StrCat("batch_matmul_0:", i));
     }
     AddNodeAttr("T", DT_FLOAT, &relu_1_node);
