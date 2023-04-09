@@ -131,6 +131,7 @@ std::vector<Tensor> GrapplerTest::BenchmarkNodes(
     const GraphDef& graph, const std::vector<string>& node_names,
     const std::vector<std::pair<string, Tensor>>& inputs) const {
   
+  std::cout <<"hebi-dbg: BenchmarkNodes: enter...\n";
   SessionOptions options;
   options.config.set_inter_op_parallelism_threads(8);
   options.config.set_intra_op_parallelism_threads(16);
@@ -141,7 +142,10 @@ std::vector<Tensor> GrapplerTest::BenchmarkNodes(
   // options_.config.mutable_graph_options()->set_intra_op_parallelism_threads(56);
 
   std::unique_ptr<tensorflow::Session> session(NewSession(options));
+  std::cout <<"hebi-dbg: BenchmarkNodes: before creating\n";
   TF_CHECK_OK(session->Create(graph));
+
+  std::cout <<"hebi-dbg: BenchmarkNodes: after creating\n";
   RunOptions run_options;
   std::vector<Tensor> output_tensors;
   int loop = 1000;

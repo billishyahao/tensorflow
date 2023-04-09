@@ -691,7 +691,7 @@ class MklRemapperTest : public GrapplerTest {
 
 
 
-TEST_F(MklRemapperTest, FuseTowerMatMulConst) {
+TEST_F(MklRemapperTest, FuseTowerMatMulBytedanceConst) {
   using ::tensorflow::ops::Placeholder;
 
   // TODO: more types of adding op support 
@@ -725,7 +725,7 @@ TEST_F(MklRemapperTest, FuseTowerMatMulConst) {
 
 
   auto input = Placeholder(s.WithOpName("input"), DT_FLOAT, input_shape);
-  int num_tower = 20;
+  int num_tower = 2;
 
   OutputList outputs;
   for (int i=0; i<num_tower; i++) {
@@ -756,22 +756,23 @@ TEST_F(MklRemapperTest, FuseTowerMatMulConst) {
     auto relu2 = ops::Relu(s.WithOpName(absl::StrCat("real_relu_1_", i)), bias_add2);
 
     // layer #3
-    Tensor filter3_data(DT_FLOAT, filter3_shape);
-    test::FillIota<float>(&filter3_data, 1.0f);
-    auto filter3 = ops::Const(s.WithOpName(absl::StrCat("real_filter_2_", i)), Input::Initializer(filter3_data));
+    // Tensor filter3_data(DT_FLOAT, filter3_shape);
+    // test::FillIota<float>(&filter3_data, 1.0f);
+    // auto filter3 = ops::Const(s.WithOpName(absl::StrCat("real_filter_2_", i)), Input::Initializer(filter3_data));
 
-    Tensor bias3_data(DT_FLOAT, bias3_shape);
-    test::FillIota<float>(&bias3_data, 1.0f);
-    auto bias3 = ops::Const(s.WithOpName(absl::StrCat("real_bias_2_", i)), Input::Initializer(bias3_data));
+    // Tensor bias3_data(DT_FLOAT, bias3_shape);
+    // test::FillIota<float>(&bias3_data, 1.0f);
+    // auto bias3 = ops::Const(s.WithOpName(absl::StrCat("real_bias_2_", i)), Input::Initializer(bias3_data));
 
-    auto matmul3 = ops::MatMul(s.WithOpName(absl::StrCat("real_matmul_2_", i)), relu2, filter3);
-    auto bias_add3 = ops::BiasAdd(s.WithOpName(absl::StrCat("real_bias_add_2_", i)), matmul3, bias3);
+    // auto matmul3 = ops::MatMul(s.WithOpName(absl::StrCat("real_matmul_2_", i)), relu2, filter3);
+    // auto bias_add3 = ops::BiasAdd(s.WithOpName(absl::StrCat("real_bias_add_2_", i)), matmul3, bias3);
 
     // layer #4 sum
     Tensor indices_data(DT_INT32, TensorShape({}));
     test::FillIota<int>(&indices_data, 1);
     auto indices = ops::Const(s.WithOpName(absl::StrCat("real_indices_2_", i)), Input::Initializer(indices_data));
-    Output sum = ops::Sum(s.WithOpName(absl::StrCat("real_sum_3_", i)), bias_add3, indices);
+    // Output sum = ops::Sum(s.WithOpName(absl::StrCat("real_sum_3_", i)), bias_add3, indices);
+    Output sum = ops::Sum(s.WithOpName(absl::StrCat("real_sum_3_", i)), relu2, indices);
 
     outputs.push_back(sum);
   }
@@ -786,7 +787,7 @@ TEST_F(MklRemapperTest, FuseTowerMatMulConst) {
       TensorShape(input_shape.shape_.dim_sizes()));
 
   GrapplerItem item;
-  item.fetch = {"fetch"};
+  item.fetch = {"real_relu_1_0"};
   item.feed = {{"input", input_tensor},
               };
 
@@ -817,7 +818,7 @@ TEST_F(MklRemapperTest, FuseTowerMatMulConst) {
 
   std::cout << "hebi-dbg: after optimizing, graph def: " << output.DebugString() << "\n";
 
-  std::cout << "hebi-dbg: Benchmarking optimized graph: ";
+  std::cout << "hebi-dbg: Benchmarking optimized graph: \n";
   BenchmarkNodes(output, item.fetch, item.feed);
   std::cout << "Benchmark done\n\n";
 
@@ -828,12 +829,6 @@ TEST_F(MklRemapperTest, FuseTowerMatMulConst) {
   EXPECT_EQ(1, tensors.size());
   test::ExpectClose(tensors_expected[0], tensors[0], 0, 1e-5);
 }
-
-
-
-
-
-
 
 
 
@@ -951,6 +946,180 @@ TEST_F(MklRemapperTest, FuseTowerMatMulConst) {
 
 //   auto fetch = s.WithOpName("fetch");
 //   ops::Identity(fetch, addn_out);
+
+//   auto input_tensor = GenerateRandomTensor<DT_FLOAT>(
+//       TensorShape(input_shape.shape_.dim_sizes()));
+
+//   GrapplerItem item;
+//   item.fetch = {"fetch"};
+//   item.feed = {{"input", input_tensor},
+//               };
+
+//   TF_CHECK_OK(s.ToGraphDef(&item.graph));
+
+//   // Place all nodes on CPU.
+//   for (int i = 0; i < item.graph.node_size(); ++i) {
+//     item.graph.mutable_node(i)->set_device("/device:CPU:0");
+//   }
+
+
+//   // std::cout << "hebi-dbg: Benchmarking old graph: ";
+
+//   // GraphDef cf_output;
+//   // ConstantFolding cf_optimizer(/*cpu_device=*/nullptr);
+//   // Status status = cf_optimizer.Optimize(/*cluster=*/nullptr, item, &cf_output);
+  
+//   // std::cout << "hebi-dbg: before graph def: " << item.graph.DebugString() << "\n";
+//   // BenchmarkNodes(cf_output, item.fetch, item.feed);
+
+//   Remapper remapper_optimizer(RewriterConfig::AGGRESSIVE);
+//   GraphDef output;
+//   TF_CHECK_OK(remapper_optimizer.Optimize(nullptr, item, &output));
+
+//   item.graph = output;
+
+//   // status = cf_optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+
+//   std::cout << "hebi-dbg: after graph def: " << output.DebugString() << "\n";
+
+//   std::cout << "hebi-dbg: Benchmarking optimized graph: ";
+//   BenchmarkNodes(output, item.fetch, item.feed);
+//   std::cout << "Benchmark done\n\n";
+
+
+//   auto tensors_expected = EvaluateNodes(item.graph, item.fetch, item.feed);
+//   auto tensors = EvaluateNodes(output, item.fetch, item.feed);
+//   EXPECT_EQ(1, tensors_expected.size());
+//   EXPECT_EQ(1, tensors.size());
+//   test::ExpectClose(tensors_expected[0], tensors[0], 0, 1e-5);
+// }
+
+
+
+
+
+
+
+
+// TEST_F(MklRemapperTest, FuseTowerMatMulBMMVer) {
+//   using ::tensorflow::ops::Placeholder;
+
+//   // TODO: more types of adding op support 
+//   // for (const string& add_op : {"BiasAdd", "AddV2", "Add"}) {
+
+//   tensorflow::Scope s = tensorflow::Scope::NewRootScope();
+
+//   // auto input_shape = ops::Placeholder::Shape({50, 775});
+//   // auto filter_shape = TensorShape({775, 256});
+//   // auto bias_shape = TensorShape({256});
+
+//   // auto input_shape = ops::Placeholder::Shape({5, 225});
+//   // auto filter1_shape = TensorShape({225, 80});
+//   // auto bias1_shape = TensorShape({80});
+
+//   // auto filter2_shape = TensorShape({80, 32});
+//   // auto bias2_shape = TensorShape({32});
+
+//   // auto filter3_shape = TensorShape({32, 1});
+//   // auto bias3_shape = TensorShape({1});
+
+//   auto input_shape = ops::Placeholder::Shape({2, 3});
+//   auto filter1_shape = TensorShape({3, 2});
+//   auto bias1_shape = TensorShape({2});
+
+//   auto filter2_shape = TensorShape({2, 3});
+//   auto bias2_shape = TensorShape({3});
+
+//   auto filter3_shape = TensorShape({3, 1});
+//   auto bias3_shape = TensorShape({1});
+
+
+//   auto input = Placeholder(s.WithOpName("input"), DT_FLOAT, input_shape);
+//   int num_tower = 2;
+
+//   OutputList outputs;
+//   OutputList filter1_list;
+//   OutputList bias1_list;
+//   for (int i=0; i<num_tower; i++) {
+//     // layer #1
+//     Tensor filter1_data(DT_FLOAT, filter1_shape);
+//     test::FillIota<float>(&filter1_data, 1.0f);
+//     auto filter1 = ops::Const(s.WithOpName(absl::StrCat("real_filter_0_", i)), Input::Initializer(filter1_data));
+//     filter1_list.push_back(filter1);
+
+//     Tensor bias1_data(DT_FLOAT, bias1_shape);
+//     test::FillIota<float>(&bias1_data, 1.0f);
+//     auto bias1 = ops::Const(s.WithOpName(absl::StrCat("real_bias_0_", i)), Input::Initializer(bias1_data));
+//     bias1_list.push_back(bias1);
+
+//     // auto matmul1 = ops::MatMul(s.WithOpName(absl::StrCat("real_matmul_0_", i)), input, filter1);
+//     // auto bias_add1 = ops::BiasAdd(s.WithOpName(absl::StrCat("real_bias_add_0_", i)), matmul1, bias1);
+//     // auto relu1 = ops::Relu(s.WithOpName(absl::StrCat("real_relu_0_", i)), bias_add1);
+
+//   }
+
+//   // auto filteraxis = ops::Const(s.WithOpName("real_filter_axis"), 1, {});
+//   // Output filterall = ops::Concat(s.WithOpName("real_filter_all_0_"), filter1_list, filteraxis);
+
+//   Output filterstackall = ops::Stack(s.WithOpName("real_pack_filter_all_0_"), filter1_list, ops::Stack::Axis(0));
+
+
+//   // auto biasaxis = ops::Const(s.WithOpName("real_bias_axis"), 0, {});
+//   // Output biasall = ops::Concat(s.WithOpName("real_bias_0_"), bias1_list, biasaxis);
+//   Output biasstackall = ops::Stack(s.WithOpName("real_pack_bias_all_0_"), bias1_list, ops::Stack::Axis(0));
+
+
+//   Output batchmatmul = ops::BatchMatMulV2(s.WithOpName("real_batch_matmul_0_"), input, filterstackall);
+//   // Output bias_add = ops::BiasAdd(s.WithOpName("real_bias_add_0_"), batchmatmul, bias1_list[0]);
+//   Output bias_add = ops::AddV2(s.WithOpName("real_bias_add_0_"), batchmatmul, biasstackall);
+//   Output relu = ops::Relu(s.WithOpName("real_relu_0_"), bias_add);
+
+
+//   // auto split_axis = ops::Const(s.WithOpName("split_axis"), 1, {});
+//   // OutputList split = ops::Split(s.WithOpName("split"), split_axis, relu, num_tower).output;
+
+
+
+//   // for (int i=0; i<num_tower; i++) {
+//   //   // layer #2
+//   //   Tensor filter2_data(DT_FLOAT, filter2_shape);
+//   //   test::FillIota<float>(&filter2_data, 1.0f);
+//   //   auto filter2 = ops::Const(s.WithOpName(absl::StrCat("real_filter_1_", i)), Input::Initializer(filter2_data));
+
+//   //   Tensor bias2_data(DT_FLOAT, bias2_shape);
+//   //   test::FillIota<float>(&bias2_data, 1.0f);
+//   //   auto bias2 = ops::Const(s.WithOpName(absl::StrCat("real_bias_1_", i)), Input::Initializer(bias2_data));
+
+//   //   auto matmul2 = ops::MatMul(s.WithOpName(absl::StrCat("real_matmul_1_", i)), split.at(i), filter2);
+//   //   auto bias_add2 = ops::BiasAdd(s.WithOpName(absl::StrCat("real_bias_add_1_", i)), matmul2, bias2);
+//   //   auto relu2 = ops::Relu(s.WithOpName(absl::StrCat("real_relu_1_", i)), bias_add2);
+
+//   //   // layer #3
+//   //   Tensor filter3_data(DT_FLOAT, filter3_shape);
+//   //   test::FillIota<float>(&filter3_data, 1.0f);
+//   //   auto filter3 = ops::Const(s.WithOpName(absl::StrCat("real_filter_2_", i)), Input::Initializer(filter3_data));
+
+//   //   Tensor bias3_data(DT_FLOAT, bias3_shape);
+//   //   test::FillIota<float>(&bias3_data, 1.0f);
+//   //   auto bias3 = ops::Const(s.WithOpName(absl::StrCat("real_bias_2_", i)), Input::Initializer(bias3_data));
+
+//   //   auto matmul3 = ops::MatMul(s.WithOpName(absl::StrCat("real_matmul_2_", i)), relu2, filter3);
+//   //   auto bias_add3 = ops::BiasAdd(s.WithOpName(absl::StrCat("real_bias_add_2_", i)), matmul3, bias3);
+
+//   //   // layer #4 sum
+//   //   Tensor indices_data(DT_INT32, TensorShape({}));
+//   //   test::FillIota<int>(&indices_data, 1);
+//   //   auto indices = ops::Const(s.WithOpName(absl::StrCat("real_indices_2_", i)), Input::Initializer(indices_data));
+//   //   Output sum = ops::Sum(s.WithOpName(absl::StrCat("real_sum_3_", i)), bias_add3, indices);
+
+//   //   outputs.push_back(sum);
+//   // }
+  
+//   // // auto addn_out = ops::AddN(s.WithOpName("output"), {outputs[0], outputs[1]});
+//   // auto addn_out = ops::AddN(s.WithOpName("output"), outputs);
+
+//   auto fetch = s.WithOpName("fetch");
+//   ops::Identity(fetch, relu);
 
 //   auto input_tensor = GenerateRandomTensor<DT_FLOAT>(
 //       TensorShape(input_shape.shape_.dim_sizes()));
