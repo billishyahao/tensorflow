@@ -49,12 +49,13 @@ bool IsSame(string op1, string op2) {
   return false;
 }
 
+
 // A subgraph pattern syntax implicitly defines a DAG having a single root. We
 // traverse the syntax DAG in DFS manner. This function finds a match for
 // current root of the pattern with the current node and recursively matches
 // children subpatterns with the children of current node.
-template <>
-bool SubGraphMatcher<MatchingDirection::kFollowInputs>::DoesOpTypePatternMatch(
+template <MatchingDirection DIRECTION>
+bool SubGraphMatcher<DIRECTION>::DoesOpTypePatternMatch(
     const OpTypePattern& pattern, MutableNodeView* node_view,
     NodeViewMatch* match) {
   // Currently no control inputs and outputs are allowed.
@@ -104,9 +105,23 @@ bool SubGraphMatcher<MatchingDirection::kFollowInputs>::DoesOpTypePatternMatch(
 
   // Go for matching child subpattern.
   if (!pattern.children.empty()) {
-    // Currently only direction toward inputs is implemented.
-    auto graph_children = node_view->GetRegularFanins();
+    using faninview_t = decltype(node_view->GetRegularFanins());
+    using fanoutview_t = decltype(node_view->GetRegularFanouts()[0]);
+
+    std::decay_t<typename std::conditional<DIRECTION == MatchingDirection::kFollowInputs,
+        faninview_t, fanoutview_t>::type> graph_children;
+    if constexpr(DIRECTION == MatchingDirection::kFollowInputs) {
+      graph_children = node_view->GetRegularFanins();
+    } else {
+      if(node_view->GetRegularFanouts().empty()) {
+        return false;
+      }
+
+      graph_children = node_view->GetRegularFanouts()[0];
+    }
+
     int num_children = graph_children.size();
+
     if (num_children != pattern.children.size()) {
       return false;
     } else {
@@ -163,9 +178,39 @@ bool SubGraphMatcher<MatchingDirection::kFollowInputs>::DoesOpTypePatternMatch(
   return true;
 }
 
+
+template<MatchingDirection DIRECTION>
+bool SubGraphMatcher<DIRECTION>::IsSafeNodesToRemove(
+      const std::unordered_set<string>& nodes_to_preserve) {
+  for (const auto& node_idx : remove_node_indices_) {
+    auto node_view = graph_view_->GetNode(node_idx);
+    // Check if the node to be removed is in the nodes to be preserved.
+    string node_name = node_view->GetName();
+    if (nodes_to_preserve.count(node_name) > 0) return false;
+    // Traverse all the Regular Fanouts. Fanouts are stored as vector of
+    // vector, std::vector<std::vector<MutableFaninView>>. Note that
+    // a MutableNodeView's fanouts are stored in a nested vector of
+    // MutableFaninView type.
+    if constexpr(DIRECTION == MatchingDirection::kFollowInputs) {
+      // We do check only in direction of inputs.
+      auto fanouts_by_ports = node_view->GetRegularFanouts();
+      for (const auto& fanouts : fanouts_by_ports) {
+        for (const auto& fanout : fanouts) {
+          if (!matched_node_indices_.count(fanout.node_index())) {
+            // if fanout of removed node is  one of matched, return safe 
+            return false;
+          }
+        }
+      }
+    }
+  }
+  return true;
+}
+
+
 // Current implementation supports pattern maching toward node's inputs only.
-template <>
-bool SubGraphMatcher<MatchingDirection::kFollowInputs>::GetMatchedNodes(
+template <MatchingDirection DIRECTION>
+bool SubGraphMatcher<DIRECTION>::GetMatchedNodes(
     const OpTypePattern& pattern,
     const std::unordered_set<string>& nodes_to_preserve,
     MutableNodeView* node_view, std::map<string, int>* matched_nodes_map,
@@ -191,6 +236,10 @@ bool SubGraphMatcher<MatchingDirection::kFollowInputs>::GetMatchedNodes(
 
   return found_match;
 }
+
+template class SubGraphMatcher<MatchingDirection::kFollowInputs>;
+template class SubGraphMatcher<MatchingDirection::kFollowOutputs>;
+
 
 }  // namespace utils
 }  // namespace grappler
