@@ -195,6 +195,72 @@ TEST_F(PatternMatcherTest, Tree) {
   EXPECT_TRUE(all_indices_matched);
 }
 
+TEST_F(PatternMatcherTest, TreeOut) {
+  // A Data flow graph. Data flows from top to bottom. Here A, B, C, D, and E
+  // are ops.
+  //
+  //     Input graph              Subgraph for pattern matcher
+  //
+  //         A                              B
+  //         |                             / \
+  //         B                            C   D
+  //        / \
+  //       C   D
+  //       \
+  //        E
+  //
+  // B is the root of pattern syntax as shown below that the pattern matcher
+  // would match.
+  //  {"E", "my_e", NodeStatus::kReplace,
+  //    {
+  //      {"C", "my_c", NodeStatus::kRemove}
+  //      {"D", "my_d", NodeStatus::kRemove}
+  //    }
+  //  }
+
+  ::tensorflow::Status status;
+  GraphDef graph = CreateGraph({{"e", "E", {"c"}},
+                                {"c", "C", {"b"}},
+                                {"d", "D", {"b"}},
+                                {"b", "B", {"a"}},
+                                {"a", "A", {}}});
+  // clang-format off
+  OpTypePattern pattern{"B", "my_b", NodeStatus::kRemain,
+    {
+      {"C", "my_c", NodeStatus::kRemove},
+      {"D", "my_d", NodeStatus::kRemove}
+    }
+  };  // clang-format on
+
+  MutableGraphView graph_view(&graph, &status);
+  TF_ASSERT_OK(status);
+  TF_EXPECT_OK(graph_view.SortTopologically(/*ignore_cycles=*/false, {}));
+  auto root_node_view = graph_view.GetNode("b");
+
+  SubGraphMatcher<MatchingDirection::kFollowOutputs> graph_matcher(&graph_view);
+  std::map<string, int> matched_nodes_map;  // label to node index map
+  std::set<int> remove_node_indices;
+  bool found_match = graph_matcher.GetMatchedNodes(
+      pattern, {}, root_node_view, &matched_nodes_map, &remove_node_indices);
+
+  EXPECT_TRUE(found_match);
+  EXPECT_FALSE(matched_nodes_map.empty());
+  EXPECT_FALSE(remove_node_indices.empty());
+
+  bool all_indices_matched = true;
+  for (auto it = matched_nodes_map.begin(); it != matched_nodes_map.begin();
+       it++) {
+    auto label = str_util::StripPrefix(it->first, "my_");
+    int matched_node_idx = it->second;
+    int expected_node_idx = graph_view.GetNode(label)->node_index();
+    if (matched_node_idx != expected_node_idx) {
+      all_indices_matched = false;
+      break;
+    }
+  }
+  EXPECT_TRUE(all_indices_matched);
+}
+
 TEST_F(PatternMatcherTest, DAG) {
   // A Data flow graph. Data flows from top to bottom. Here A, B, C, D, and E
   // are ops.

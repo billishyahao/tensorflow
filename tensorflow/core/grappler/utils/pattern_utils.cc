@@ -49,17 +49,20 @@ bool IsSame(string op1, string op2) {
   return false;
 }
 
+
 // A subgraph pattern syntax implicitly defines a DAG having a single root. We
 // traverse the syntax DAG in DFS manner. This function finds a match for
 // current root of the pattern with the current node and recursively matches
 // children subpatterns with the children of current node.
-template <>
-bool SubGraphMatcher<MatchingDirection::kFollowInputs>::DoesOpTypePatternMatch(
+template <MatchingDirection DIRECTION>
+bool SubGraphMatcher<DIRECTION>::DoesOpTypePatternMatch(
     const OpTypePattern& pattern, MutableNodeView* node_view,
     NodeViewMatch* match) {
+  std::cout <<"hebi-dbg: enter DoesOpTypePatternMatch, pattern.op= " << pattern.op << ", pattern.label= " << pattern.label << " \n";
   // Currently no control inputs and outputs are allowed.
   if (node_view->NumControllingFanins() > 0 ||
       node_view->NumControlledFanouts() > 0)
+    // std::cout <<"hebi-dbg: exit 0 DoesOpTypePatternMatch \n ";  
     return false;
 
   bool op_type_matched = false;
@@ -92,11 +95,13 @@ bool SubGraphMatcher<MatchingDirection::kFollowInputs>::DoesOpTypePatternMatch(
         remove_node_indices_.insert(node_view->node_index());
       }
     } else if (node_label_to_index_[pattern.label] != node_view->node_index()) {
+      // std::cout <<"hebi-dbg: exit 1 DoesOpTypePatternMatch \n ";  
       return false;  // label constraint could not be satisfied.
     } else {
       DCHECK(node_label_to_index_[pattern.label] == node_view->node_index());
     }
   } else {
+    // std::cout <<"hebi-dbg: exit 2 DoesOpTypePatternMatch \n ";  
     return false;
   }
   // Current root of the pattern syntax is matched with the current node.
@@ -105,9 +110,38 @@ bool SubGraphMatcher<MatchingDirection::kFollowInputs>::DoesOpTypePatternMatch(
   // Go for matching child subpattern.
   if (!pattern.children.empty()) {
     // Currently only direction toward inputs is implemented.
-    auto graph_children = node_view->GetRegularFanins();
+    // TODO: hebi-dbg:
+
+    using faninview_t = decltype(node_view->GetRegularFanins());
+    using fanoutview_t = decltype(node_view->GetRegularFanouts()[0]);
+
+    std::decay_t<typename std::conditional<DIRECTION == MatchingDirection::kFollowInputs,
+        faninview_t, fanoutview_t>::type> graph_children;
+    if constexpr(DIRECTION == MatchingDirection::kFollowInputs) {
+      graph_children = node_view->GetRegularFanins();
+    } else {
+      if(node_view->GetRegularFanouts().empty()) {
+        std::cout <<"hebi-dbg: exit 3 DoesOpTypePatternMatch \n";  
+        return false;
+      }
+
+      graph_children = node_view->GetRegularFanouts()[0];
+    }
+
     int num_children = graph_children.size();
+
+    // hebi-dbg: print all pattern children
+    for (int i=0; i<num_children; i++) {
+      MutableNodeView* graph_child0_node_view =
+        graph_view_->GetNode(graph_children[i].node_index());
+
+      std::cout << "hebi-dbg: getting child #" << i << ", op: " << graph_child0_node_view->GetOp() << ", label: " << graph_child0_node_view->GetName() << ".\n";
+    }
+
+
+
     if (num_children != pattern.children.size()) {
+      // std::cout <<"hebi-dbg: exit 3 DoesOpTypePatternMatch \n ";  
       return false;
     } else {
       // A pattern is a graph that we would like to match with a subgraph of
@@ -155,7 +189,39 @@ bool SubGraphMatcher<MatchingDirection::kFollowInputs>::DoesOpTypePatternMatch(
         NodeViewMatch* child_match = &(match->children.back());
         if (!DoesOpTypePatternMatch(child_pattern, child_node_view,
                                     child_match)) {
+          // std::cout <<"hebi-dbg: exit 4 DoesOpTypePatternMatch \n ";  
           return false;
+        }
+      }
+    }
+  }
+  std::cout <<"hebi-dbg: exit 5 DoesOpTypePatternMatch \n ";
+  return true;
+}
+
+
+template<MatchingDirection DIRECTION>
+bool SubGraphMatcher<DIRECTION>::IsSafeNodesToRemove(
+      const std::unordered_set<string>& nodes_to_preserve) {
+  for (const auto& node_idx : remove_node_indices_) {
+    auto node_view = graph_view_->GetNode(node_idx);
+    // Check if the node to be removed is in the nodes to be preserved.
+    string node_name = node_view->GetName();
+    std::cout << "hebi-dbg: node-name: " << node_name << ".\n"; 
+    if (nodes_to_preserve.count(node_name) > 0) return false;
+    // Traverse all the Regular Fanouts. Fanouts are stored as vector of
+    // vector, std::vector<std::vector<MutableFaninView>>. Note that
+    // a MutableNodeView's fanouts are stored in a nested vector of
+    // MutableFaninView type.
+    if constexpr(DIRECTION == MatchingDirection::kFollowInputs) {
+      // We do check only in direction of inputs.
+      auto fanouts_by_ports = node_view->GetRegularFanouts();
+      for (const auto& fanouts : fanouts_by_ports) {
+        for (const auto& fanout : fanouts) {
+          if (!matched_node_indices_.count(fanout.node_index())) {
+            // if fanout of removed node is  one of matched, return safe 
+            return false;
+          }
         }
       }
     }
@@ -163,22 +229,26 @@ bool SubGraphMatcher<MatchingDirection::kFollowInputs>::DoesOpTypePatternMatch(
   return true;
 }
 
+
 // Current implementation supports pattern maching toward node's inputs only.
-template <>
-bool SubGraphMatcher<MatchingDirection::kFollowInputs>::GetMatchedNodes(
+template <MatchingDirection DIRECTION>
+bool SubGraphMatcher<DIRECTION>::GetMatchedNodes(
     const OpTypePattern& pattern,
     const std::unordered_set<string>& nodes_to_preserve,
     MutableNodeView* node_view, std::map<string, int>* matched_nodes_map,
     std::set<int>* remove_node_indices) {
+  // std::cout << "hebi-dbg: Enter GetMatchedNodes...\n";
   bool found_match = false;
   match_.reset(new NodeViewMatch());
   if (DoesOpTypePatternMatch(pattern, node_view, match_.get())) {
+    std::cout << "hebi-dbg: DoesOpTypePatternMatch\n";
     if (IsSafeNodesToRemove(nodes_to_preserve)) {
       found_match = true;
       *matched_nodes_map = this->node_label_to_index_;
       *remove_node_indices = this->remove_node_indices_;
     }
   } else {
+    std::cout << "hebi-dbg: DoesntOpTypePatternMatch\n";
     found_match = false;
   }
 
@@ -191,6 +261,10 @@ bool SubGraphMatcher<MatchingDirection::kFollowInputs>::GetMatchedNodes(
 
   return found_match;
 }
+
+template class SubGraphMatcher<MatchingDirection::kFollowInputs>;
+template class SubGraphMatcher<MatchingDirection::kFollowOutputs>;
+
 
 }  // namespace utils
 }  // namespace grappler
