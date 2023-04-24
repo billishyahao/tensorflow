@@ -18,6 +18,9 @@ limitations under the License.
 #include <set>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
+
 #include "tensorflow/core/framework/versions.pb.h"
 #include "tensorflow/core/grappler/costs/graph_properties.h"
 #include "tensorflow/core/grappler/graph_view.h"
@@ -1528,14 +1531,41 @@ utils::OpTypePattern GenSubTowerMatmulPatternFollowOutputs(int index) {
   return output;
 }
 
+// TODO(bixia): put this to a common utility file.
+string TensorPropertiesToString(const OpInfo::TensorProperties& prop) {
+  string s = absl::StrCat(DataTypeString(prop.dtype()), ": ");
+  absl::StrAppend(&s, "[");
+  if (prop.shape().unknown_rank()) {
+    absl::StrAppend(&s, "?");
+  } else {
+    absl::StrAppend(&s, absl::StrJoin(prop.shape().dim(), ",",
+                          [](string* out, const TensorShapeProto_Dim& d) {
+                            absl::StrAppendFormat(out, "%d", d.size());
+                          }));
+  }
+  absl::StrAppend(&s, "]");
+  return s;
+}
+
+
+string TensorPropertiesToString(
+    const std::vector<OpInfo::TensorProperties>& properties) {
+  return absl::StrJoin(properties, "; ",
+                 [](string* out, const OpInfo::TensorProperties& prop) {
+                   absl::StrAppend(out, TensorPropertiesToString(prop));
+                 });
+}
+
+
 // Gelu in python api generates a number of nodes in the graph. Depending on the
 // parmeter `approximate={True/False}` different types of ops are generated. We
 // distinguish them as `GeluExact` that uses Erf and `GeluApproximate` that
 // uses Tanh.
-bool FindTowerMatmul(RemapperContext* ctx, int node_index,
+bool FindTowerMatmulWithTowerNum(RemapperContext* ctx, int node_index,
                               const Cluster* cluster,
                               std::map<string, int>* matched_nodes_map,
-                              std::set<int>* remove_node_indices) {
+                              std::set<int>* remove_node_indices,
+                              int tower_num) {
   // Gelu fusion is enabled with oneDNN or cublasLt or cuDNN library.
   // if (!IsMKLEnabled() && !BlasLtMatmulEnabled() &&
   //     !RuntimeFusionEnabled(cluster))
@@ -1551,47 +1581,17 @@ bool FindTowerMatmul(RemapperContext* ctx, int node_index,
   matched_nodes_map->clear();
   remove_node_indices->clear();
 
-  // clang-format off
 
-  int tower_num = 8;
-
-  // utils::OpTypePattern sub_tower_matmul_pattern0 = GenSubTowerMatmulPatternFollowOutputs(0);
-  // utils::OpTypePattern sub_tower_matmul_pattern1 = GenSubTowerMatmulPatternFollowOutputs(1);
-  // utils::OpTypePattern sub_tower_matmul_pattern2 = GenSubTowerMatmulPatternFollowOutputs(2);
-  // utils::OpTypePattern sub_tower_matmul_pattern3 = GenSubTowerMatmulPatternFollowOutputs(3);
-  // utils::OpTypePattern sub_tower_matmul_pattern4 = GenSubTowerMatmulPatternFollowOutputs(4);
-  // utils::OpTypePattern sub_tower_matmul_pattern5 = GenSubTowerMatmulPatternFollowOutputs(5);
-  // utils::OpTypePattern sub_tower_matmul_pattern6 = GenSubTowerMatmulPatternFollowOutputs(6);
-  // utils::OpTypePattern sub_tower_matmul_pattern7 = GenSubTowerMatmulPatternFollowOutputs(7);
-  
   std::vector<utils::OpTypePattern> sub_tower_matmul_pattern_vec;
 
   for (int i=0; i<tower_num; i++) {
     sub_tower_matmul_pattern_vec.push_back(GenSubTowerMatmulPatternFollowOutputs(i));
   }
 
-  // utils::OpTypePattern tower2_matmul_pattern = 
-  // {"*", "input", NodeStatus::kRemain, 
-  //   {
-  //     sub_tower_matmul_pattern0,
-  //     sub_tower_matmul_pattern1,
-  //     sub_tower_matmul_pattern2,
-  //     sub_tower_matmul_pattern3,
-  //     sub_tower_matmul_pattern4,
-  //     sub_tower_matmul_pattern5,
-  //     sub_tower_matmul_pattern6,
-  //     sub_tower_matmul_pattern7
-  //   }
-  // };
-
   utils::OpTypePattern tower2_matmul_pattern = 
   {"*", "input", NodeStatus::kRemain, 
       sub_tower_matmul_pattern_vec
   };
-
-
-  // clang-format on
-
 
   utils::MutableNodeView* node_view = ctx->graph_view.GetNode(node_index);
   utils::SubGraphMatcher<MatchingDirection::kFollowOutputs> graph_matcher(
@@ -1601,19 +1601,103 @@ bool FindTowerMatmul(RemapperContext* ctx, int node_index,
   // graph_matcher.DoesOpTypePatternMatch(tower_matmul_pattern, node_view, )
 
     
-  bool matched = graph_matcher.GetMatchedNodes(
+  bool found_tower_node = graph_matcher.GetMatchedNodes(
       tower2_matmul_pattern, ctx->nodes_to_preserve, node_view,
       matched_nodes_map, remove_node_indices);
 
-  if (matched) {
-    std::cout << "hebi-dbg: find tower matmul matched\n";
-  } else {
+  if (!found_tower_node) {
     std::cout << "hebi-dbg: find tower matmul notmatch\n";
+    return false;
   }
-  return matched;
+
+  std::cout << "hebi-dbg: find tower matmul matched\n";
+
+  // Further check every layer matmul output shape
+
+  // TODO: hebi: add more comments for this inferring
+  // it is an expensive operation
+  if (!ctx->inferred_graph_properties) {
+    Status s = ctx->graph_properties.InferStatically(
+        /*assume_valid_feeds=*/true,
+        /*aggressive_shape_inference=*/false,
+        /*include_input_tensor_values=*/false,
+        /*include_output_tensor_values=*/true);
+    if (!s.ok()) return false;
+    ctx->inferred_graph_properties = true;
+  }
+
+  // Check all matmul output in layer #0
+  NodeDef* matmul_node_0_0_def =
+      ctx->graph_view.GetNode(matched_nodes_map->at("matmul_0_0"))->node();
+  const std::vector<OpInfo::TensorProperties>& matmul_node_0_0_props =
+      ctx->graph_properties.GetOutputProperties(matmul_node_0_0_def->name());
+  
+  std::cout << "hebi-dbg: matmul_node_0_0_def->name()= " << matmul_node_0_0_def->name() << "\n";
+  std::cout << "hebi-dbg: size of matmul_node_0_0_props: " << matmul_node_0_0_props.size() << "\n";
+
+  std::cout << "hebi-dbg: matmul_node_0_0_props shapes "
+          << TensorPropertiesToString(matmul_node_0_0_props) << "\n";
+
+  for (int i=1; i<tower_num; i++) {
+    NodeDef* matmul_node_0_other_def = 
+      ctx->graph_view.GetNode(matched_nodes_map->at(absl::StrCat("matmul_0_", i)))->node();
+    const std::vector<OpInfo::TensorProperties>& matmul_node_0_other_props =
+      ctx->graph_properties.GetOutputProperties(matmul_node_0_other_def->name());
+
+    std::cout << "hebi-dbg: size of matmul_node_0_other_props: " << matmul_node_0_other_props.size() << "\n";
+    std::cout << "hebi-dbg: matmul_node_0_other_props i=" << i << ", shapes = "
+          << TensorPropertiesToString(matmul_node_0_other_props) << "\n";
+
+    if (!ShapesSymbolicallyEqual(matmul_node_0_0_props[0].shape(),
+                                matmul_node_0_other_props[0].shape())) {
+      std::cout << "hebi-dbg: matmul layer #0 output shape notmatch\n";
+      return false;
+    }
+  }
+
+
+  // // Check all matmul output in layer #1
+  NodeDef* matmul_node_1_0_def =
+      ctx->graph_view.GetNode(matched_nodes_map->at("matmul_1_0"))->node();
+  auto matmul_node_1_0_props =
+      ctx->graph_properties.GetOutputProperties(matmul_node_1_0_def->name());
+
+  for (int i=1; i<tower_num; i++) {
+    NodeDef* matmul_node_1_other_def = 
+      ctx->graph_view.GetNode(matched_nodes_map->at(absl::StrCat("matmul_1_", i)))->node();
+    auto matmul_node_1_other_props =
+      ctx->graph_properties.GetOutputProperties(matmul_node_1_other_def->name());
+    
+    if (!ShapesSymbolicallyEqual(matmul_node_1_0_props[0].shape(),
+                                matmul_node_1_other_props[0].shape())) {
+      std::cout << "hebi-dbg: matmul layer #1 output shape notmatch\n";
+      return false;
+    }
+  }
+
+
+  std::cout << "hebi-dbg: find tower matmul matched; End.\n";
+  return true;
 }
 
 
+// Gelu in python api generates a number of nodes in the graph. Depending on the
+// parmeter `approximate={True/False}` different types of ops are generated. We
+// distinguish them as `GeluExact` that uses Erf and `GeluApproximate` that
+// uses Tanh.
+bool FindTowerMatmul(RemapperContext* ctx, int node_index,
+                              const Cluster* cluster,
+                              std::map<string, int>* matched_nodes_map,
+                              std::set<int>* remove_node_indices) {
+  int MAX_TOWER_NUM = 32;
+  for (int i=MAX_TOWER_NUM; i>=2; i--) {
+    std::cout << "hebi-dbg: FindTowerMatmul with num: " << i << "\n";
+    if (FindTowerMatmulWithTowerNum(ctx, node_index, cluster, matched_nodes_map, remove_node_indices, i)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 
 
