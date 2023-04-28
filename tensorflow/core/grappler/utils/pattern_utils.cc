@@ -217,18 +217,18 @@ bool SubGraphMatcher<MatchingDirection::kFollowInputs>::GetMatchedNodes(
     const std::unordered_set<string>& nodes_to_preserve,
     MutableNodeView* node_view, std::map<string, int>* matched_nodes_map,
     std::set<int>* remove_node_indices) {
-  // std::cout << "hebi-dbg: Enter GetMatchedNodes...\n";
+  std::cout << "hebi-dbg: Enter GetMatchedNodes...\n";
   bool found_match = false;
   match_.reset(new NodeViewMatch());
   if (DoesOpTypePatternMatch(pattern, node_view, match_.get())) {
-    // std::cout << "hebi-dbg: DoesOpTypePatternMatch\n";
+    std::cout << "hebi-dbg: DoesOpTypePatternMatch\n";
     if (IsSafeNodesToRemove(nodes_to_preserve)) {
       found_match = true;
       *matched_nodes_map = this->node_label_to_index_;
       *remove_node_indices = this->remove_node_indices_;
     }
   } else {
-    // std::cout << "hebi-dbg: DoesntOpTypePatternMatch\n";
+    std::cout << "hebi-dbg: DoesntOpTypePatternMatch\n";
     found_match = false;
   }
 
@@ -436,6 +436,10 @@ bool SubGraphMatcher<MatchingDirection::kFollowOutputs>::GetMatchedNodes(
     MutableNodeView* node_view, std::map<string, int>* matched_nodes_map,
     std::set<int>* remove_node_indices) {
   std::cout << "hebi-dbg: Enter <kFollowOutputs> GetMatchedNodes: " <<  node_view->GetName() <<"\n";
+  for (auto nodes_name : nodes_to_preserve) {
+    std::cout << "hebi-dbg: nodes_to_preserve: nodes_name: " << nodes_name << ".\n"; 
+  }
+  
   bool found_match = false;
   match_.reset(new NodeViewMatch());
   if (DoesOpTypePatternMatch(pattern, node_view, match_.get())) {
