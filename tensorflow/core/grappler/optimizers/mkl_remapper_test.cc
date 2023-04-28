@@ -725,7 +725,7 @@ TEST_F(MklRemapperTest, FuseTowerMatMulBytedanceConst) {
 
 
   auto input = Placeholder(s.WithOpName("input"), DT_FLOAT, input_shape);
-  int num_tower = 3;
+  int num_tower = 8;
 
   OutputList outputs;
   for (int i=0; i<num_tower; i++) {
@@ -753,25 +753,25 @@ TEST_F(MklRemapperTest, FuseTowerMatMulBytedanceConst) {
 
     auto matmul2 = ops::MatMul(s.WithOpName(absl::StrCat("real_matmul_1_", i)), relu1, filter2);
     auto bias_add2 = ops::BiasAdd(s.WithOpName(absl::StrCat("real_bias_add_1_", i)), matmul2, bias2);
-    auto relu2 = ops::Relu(s.WithOpName(absl::StrCat("real_relu_1_", i)), bias_add2);
+    // auto relu2 = ops::Relu(s.WithOpName(absl::StrCat("real_relu_1_", i)), bias_add2);
 
-    // layer #3
-    Tensor filter3_data(DT_FLOAT, filter3_shape);
-    test::FillIota<float>(&filter3_data, 1.0f);
-    auto filter3 = ops::Const(s.WithOpName(absl::StrCat("real_filter_2_", i)), Input::Initializer(filter3_data));
+    // // layer #3
+    // Tensor filter3_data(DT_FLOAT, filter3_shape);
+    // test::FillIota<float>(&filter3_data, 1.0f);
+    // auto filter3 = ops::Const(s.WithOpName(absl::StrCat("real_filter_2_", i)), Input::Initializer(filter3_data));
 
-    Tensor bias3_data(DT_FLOAT, bias3_shape);
-    test::FillIota<float>(&bias3_data, 1.0f);
-    auto bias3 = ops::Const(s.WithOpName(absl::StrCat("real_bias_2_", i)), Input::Initializer(bias3_data));
+    // Tensor bias3_data(DT_FLOAT, bias3_shape);
+    // test::FillIota<float>(&bias3_data, 1.0f);
+    // auto bias3 = ops::Const(s.WithOpName(absl::StrCat("real_bias_2_", i)), Input::Initializer(bias3_data));
 
-    auto matmul3 = ops::MatMul(s.WithOpName(absl::StrCat("real_matmul_2_", i)), relu2, filter3);
-    auto bias_add3 = ops::BiasAdd(s.WithOpName(absl::StrCat("real_bias_add_2_", i)), matmul3, bias3);
+    // auto matmul3 = ops::MatMul(s.WithOpName(absl::StrCat("real_matmul_2_", i)), relu2, filter3);
+    // auto bias_add3 = ops::BiasAdd(s.WithOpName(absl::StrCat("real_bias_add_2_", i)), matmul3, bias3);
 
     // layer #4 sum
     Tensor indices_data(DT_INT32, TensorShape({}));
     test::FillIota<int>(&indices_data, 1);
     auto indices = ops::Const(s.WithOpName(absl::StrCat("real_indices_2_", i)), Input::Initializer(indices_data));
-    Output sum = ops::Sum(s.WithOpName(absl::StrCat("real_sum_3_", i)), bias_add3, indices);
+    Output sum = ops::Sum(s.WithOpName(absl::StrCat("real_sum_3_", i)), bias_add2, indices);
     // Output sum = ops::Sum(s.WithOpName(absl::StrCat("real_sum_3_", i)), relu2, indices);
 
     outputs.push_back(sum);
