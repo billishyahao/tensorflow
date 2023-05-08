@@ -193,8 +193,15 @@ class BatchMatMulMkl : public OpKernel {
     UserScratchPad<unsigned char> scratch_pad;
     scratch_pad.AllocateSPTensor(matmul_prim, ctx);
     // Execute matmul primitive.
+
+    // TODO: hebi execute single thread
+    // auto st = ExecuteSingleThreadedGemm(batch, channel, k, sizeof(T));
+    bool st = false;
+    if (lhs_rows == 16 && lhs_cols == 16) {
+      st = true;
+    }
     std::shared_ptr<stream> cpu_stream;
-    MklDnnThreadPool eigen_tp(ctx);
+    MklDnnThreadPool eigen_tp(ctx, st ? 1 : -1);
     cpu_stream.reset(CreateStream(&eigen_tp, matmul_prim->GetEngine()));
     if (fused_ops_.size() > 0) {
       void* mul_data = nullptr;
