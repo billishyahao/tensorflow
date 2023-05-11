@@ -725,7 +725,7 @@ TEST_F(MklRemapperTest, FuseTowerMatMulBytedanceConst) {
 
 
   auto input = Placeholder(s.WithOpName("input"), DT_FLOAT, input_shape);
-  int num_tower = 8;
+  int num_tower = 9;
 
   OutputList outputs;
   for (int i=0; i<num_tower; i++) {

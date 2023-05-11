@@ -1499,34 +1499,10 @@ utils::OpTypePattern GenSubTowerMatmulPatternFollowOutputs(int index) {
     "MatMul", absl::StrCat("matmul_0_", index), NodeStatus::kRemove,
     {
       {
-        "BiasAdd", absl::StrCat("bias_0_", index), NodeStatus::kRemove,
-        {
-          {
-            "Relu", absl::StrCat("relu_0_", index), NodeStatus::kRemove,
-            {
-              {
-                "MatMul", absl::StrCat("matmul_1_", index), NodeStatus::kRemove,
-                {
-                  {
-                    "BiasAdd", absl::StrCat("bias_1_", index), NodeStatus::kReplace,
-                    {
-                      {
-                        {
-                          "Sum", absl::StrCat("sum_3_", index), NodeStatus::kRemain
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
+        "BiasAdd", absl::StrCat("bias_0_", index), NodeStatus::kReplace
       }
     }
   };
-
-  
 
   utils::OpTypePattern output = tower0;
 
@@ -1658,26 +1634,6 @@ bool FindTowerMatmulWithTowerNum(RemapperContext* ctx, int node_index,
   }
 
 
-  // // Check all matmul output in layer #1
-  NodeDef* matmul_node_1_0_def =
-      ctx->graph_view.GetNode(matched_nodes_map->at("matmul_1_0"))->node();
-  auto matmul_node_1_0_props =
-      ctx->graph_properties.GetOutputProperties(matmul_node_1_0_def->name());
-
-  for (int i=1; i<tower_num; i++) {
-    NodeDef* matmul_node_1_other_def = 
-      ctx->graph_view.GetNode(matched_nodes_map->at(absl::StrCat("matmul_1_", i)))->node();
-    auto matmul_node_1_other_props =
-      ctx->graph_properties.GetOutputProperties(matmul_node_1_other_def->name());
-    
-    if (!ShapesSymbolicallyEqual(matmul_node_1_0_props[0].shape(),
-                                matmul_node_1_other_props[0].shape())) {
-      std::cout << "hebi-dbg: matmul layer #1 output shape notmatch\n";
-      return false;
-    }
-  }
-
-
   std::cout << "hebi-dbg: find tower matmul matched; End.\n";
   return true;
 }
@@ -1700,7 +1656,7 @@ bool FindTowerMatmul(RemapperContext* ctx, int node_index,
   // }
   // return false;
   // return FindTowerMatmulWithTowerNum(ctx, node_index, cluster, matched_nodes_map, remove_node_indices, 3);
-  return FindTowerMatmulWithTowerNum(ctx, node_index, cluster, matched_nodes_map, remove_node_indices, 8);
+  return FindTowerMatmulWithTowerNum(ctx, node_index, cluster, matched_nodes_map, remove_node_indices, 9);
 }
 
 
@@ -3056,21 +3012,11 @@ Status AddFusedTowerMatmulBMMVer(
     matmul_0_list.push_back(*ctx->graph_view.GetNode(matched_nodes_map.at(absl::StrCat("matmul_0_", i)))->node());
   }
 
-  std::vector<NodeDef> matmul_1_list;
+
+
+  std::vector<NodeDef> bias_0_list;
   for (int i=0; i<tower_count; i++) {
-    matmul_1_list.push_back(*ctx->graph_view.GetNode(matched_nodes_map.at(absl::StrCat("matmul_1_", i)))->node());
-  }
-
-
-  
-  // std::vector<NodeDef> bias_0_list;
-  // for (int i=0; i<tower_count; i++) {
-  //   bias_0_list.push_back(*ctx->graph_view.GetNode(matched_nodes_map.at(absl::StrCat("bias_0_", i)))->node());
-  // }
-
-  std::vector<NodeDef> bias_2_list;
-  for (int i=0; i<tower_count; i++) {
-    bias_2_list.push_back(*ctx->graph_view.GetNode(matched_nodes_map.at(absl::StrCat("bias_1_", i)))->node());
+    bias_0_list.push_back(*ctx->graph_view.GetNode(matched_nodes_map.at(absl::StrCat("bias_0_", i)))->node());
   }
   
 
@@ -3104,40 +3050,13 @@ Status AddFusedTowerMatmulBMMVer(
   AddNodeAttr("T", DT_FLOAT, &batchmatmul_node_0);
   std::cout << "hebi-dbg: batchmatmul_node_0: " << batchmatmul_node_0.DebugString() << "\n";
 
-  // layer #1
-
-  NodeDef filterall_pack_node_1;
-  filterall_pack_node_1.set_op("Pack");
-  filterall_pack_node_1.set_name("pack_filter_1");
-  filterall_pack_node_1.set_device(matmul_1_list.at(0).device());
-  for (int i=0; i<tower_count; i++) {
-    filterall_pack_node_1.add_input(matmul_1_list.at(i).input(1));
-  }
-  AddNodeAttr("N", tower_count, &filterall_pack_node_1);
-  AddNodeAttr("T", DT_FLOAT, &filterall_pack_node_1);
-  AddNodeAttr("axis", 0, &filterall_pack_node_1);
-  std::cout << "hebi-dbg: filterall_pack_node_1: " << filterall_pack_node_1.DebugString() << "\n";
-  
-
-
-  NodeDef batchmatmul_node_1;
-  batchmatmul_node_1.set_name("batch_matmul_1");
-  batchmatmul_node_1.set_op("BatchMatMulV2");
-  batchmatmul_node_1.set_device(matmul_0_list.at(0).device());
-  batchmatmul_node_1.add_input("batch_matmul_0");
-  batchmatmul_node_1.add_input(filterall_pack_node_1.name());
-  AddNodeAttr("adj_x", false, &batchmatmul_node_1);
-  AddNodeAttr("adj_y", false, &batchmatmul_node_1);
-  AddNodeAttr("T", DT_FLOAT, &batchmatmul_node_1);
-  std::cout << "hebi-dbg: batchmatmul_node_1: " << batchmatmul_node_1.DebugString() << "\n";
-
 
 
   NodeDef unpack_ret_node;
   unpack_ret_node.set_op("Unpack");
   unpack_ret_node.set_name("unpack_ret");
-  unpack_ret_node.set_device(matmul_1_list.at(0).device());
-  unpack_ret_node.add_input("batch_matmul_1");
+  unpack_ret_node.set_device(matmul_0_list.at(0).device());
+  unpack_ret_node.add_input("batch_matmul_0");
   AddNodeAttr("num", tower_count, &unpack_ret_node);
   AddNodeAttr("T", DT_FLOAT, &unpack_ret_node);
   AddNodeAttr("axis", 0, &unpack_ret_node);
@@ -3153,13 +3072,11 @@ Status AddFusedTowerMatmulBMMVer(
   Status status;
   mutation->AddNode(std::move(filterall_pack_node_0), &status);
   TF_RETURN_IF_ERROR(status);
-  mutation->AddNode(std::move(filterall_pack_node_1), &status);
-  TF_RETURN_IF_ERROR(status);
+
 
   mutation->AddNode(std::move(batchmatmul_node_0), &status);
   TF_RETURN_IF_ERROR(status);
-  mutation->AddNode(std::move(batchmatmul_node_1), &status);
-  TF_RETURN_IF_ERROR(status);
+
 
 
   mutation->AddNode(std::move(unpack_ret_node), &status);
@@ -3168,7 +3085,7 @@ Status AddFusedTowerMatmulBMMVer(
   for (int i=0; i<tower_count; i++) {
 
     NodeDef bias_2_node;
-    bias_2_node.set_name(bias_2_list.at(i).name());
+    bias_2_node.set_name(bias_0_list.at(i).name());
     bias_2_node.set_op("Identity");
     bias_2_node.set_device(matmul_0_list.at(0).device());
     
@@ -3193,7 +3110,7 @@ Status AddFusedTowerMatmulBMMVer(
 
 
   for (int i=0; i<tower_count; i++) {
-    (*invalidated_nodes)[matched_nodes_map.at(absl::StrCat("bias_1_", i))] = true;
+    (*invalidated_nodes)[matched_nodes_map.at(absl::StrCat("bias_0_", i))] = true;
   }
 
   for (const auto& node_idx : remove_node_indices) {
