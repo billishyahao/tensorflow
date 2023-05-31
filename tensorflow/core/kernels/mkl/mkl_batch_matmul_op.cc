@@ -56,6 +56,7 @@ class BatchMatMulMkl : public OpKernel {
   virtual ~BatchMatMulMkl() {}
 
   void Compute(OpKernelContext* ctx) override {
+    // std::cout << "hebi-dbg: batchmatmul compute: enter \n";
     const Tensor& lhs = ctx->input(0);
     const Tensor& rhs = ctx->input(1);
 
@@ -89,6 +90,9 @@ class BatchMatMulMkl : public OpKernel {
     // lhs and rhs can have different dimensions
     const auto ndims_lhs = lhs.dims();
     const auto ndims_rhs = rhs.dims();
+
+    // std::cout << "hebi-dbg: lhs: dims = " << ndims_lhs << "\n";
+    // std::cout << "hebi-dbg: rhs: dims = " << ndims_rhs << "\n";
 
     // Get broadcast info
     MatMulBCast bcast(lhs.shape().dim_sizes(), rhs.shape().dim_sizes());
@@ -150,7 +154,7 @@ class BatchMatMulMkl : public OpKernel {
 
 // TODO(Arm, Intel): Reach agreement on whether this block should be deleted.
 // https://github.com/tensorflow/tensorflow/pull/57987#discussion_r993731524
-#ifdef DNNL_AARCH64_USE_ACL
+// #ifdef DNNL_AARCH64_USE_ACL
     memory::format_tag weight_format;
     switch (params->b_dims.size()) {
       case 2:
@@ -181,14 +185,30 @@ class BatchMatMulMkl : public OpKernel {
       // Reorder weights if necessary.
       // Check whether we need to do reorder.
       if (weight_md != matmul_pd->weights_desc()) {
-        weights_mkl.SetUsrMem(weight_md, weight_data);
-        weights_mkl.CheckReorderToOpMem(matmul_pd.get()->weights_desc(),
-                                        this->cpu_engine_, ctx);
-        weight_data =
-            reinterpret_cast<Trhs*>(weights_mkl.GetOpMem().get_data_handle());
+        Trhs* cached_weight_data = nullptr;
+
+        if (this->IsWeightCacheEmpty(ctx)) {
+          this->CacheWeight(ctx, matmul_pd, cached_weight_data, rhs,
+                            weights_mkl, weight_md);
+        }
+        cached_weight_data =
+            this->GetCachedWeight(ctx, matmul_pd->weights_desc());
+
+        // Cache weight may fail when it gets different format in different
+        // iteration. Fallback to reoder if it happens.
+        // Also do generel reorder if weight isn't const.
+        if (cached_weight_data != nullptr) {
+          weight_data = cached_weight_data;
+        } else {
+          weights_mkl.SetUsrMem(weight_md, weight_data);
+          weights_mkl.CheckReorderToOpMem(matmul_pd.get()->weights_desc(),
+                                         this->cpu_engine_, ctx);
+          weight_data =
+              reinterpret_cast<Trhs*>(weights_mkl.GetOpMem().get_data_handle());
+        }
       }
     }
-#endif  // DNNL_AARCH64_USE_ACL
+// #endif  // DNNL_AARCH64_USE_ACL
 
     UserScratchPad<unsigned char> scratch_pad;
     scratch_pad.AllocateSPTensor(matmul_prim, ctx);
@@ -225,9 +245,90 @@ class BatchMatMulMkl : public OpKernel {
     }
   }
 
+  // TF_LOCKS_EXCLUDED annotation ensures that the lock (mu_) cannot
+  // be acquired before entering the function, since it is acquired
+  // inside the function.
+  inline bool IsWeightCacheEmpty(OpKernelContext* context)
+      TF_LOCKS_EXCLUDED(mu_) {
+    tf_shared_lock lock(mu_);
+    return (weight_oi_.NumElements() == 0);
+  }
+
+  // Cache the converted weight in a tensor.
+  // Only one thread can execute this method at any given time.
+  void CacheWeight(
+      OpKernelContext* context,
+      const std::shared_ptr<dnnl::matmul::primitive_desc>&
+          matmul_fwd_pd,
+      Trhs* weight_data, const Tensor& weight_tensor,
+      MklDnnData<Trhs>& weight, const memory::desc& weight_md)
+      TF_LOCKS_EXCLUDED(mu_) {
+    mutex_lock lock(mu_);
+    const Tensor& weight_t = weight_oi_;
+
+    // If the weights are already cached, there's nothing to do
+    if (weight_t.NumElements() > 0) {
+      return;
+    }
+
+    // reorder and cache the weight
+    weight.SetUsrMem(weight_md, &weight_tensor);
+    weight.CheckReorderToOpMem(matmul_fwd_pd.get()->weights_desc(), cpu_engine_,
+                               context);
+    weight_data = static_cast<Trhs*>(weight.GetOpMem().get_data_handle());
+
+    size_t weight_size = matmul_fwd_pd.get()->weights_desc().get_size();
+    TensorShape weight_tf_shape;
+    weight_tf_shape.AddDim(weight_size / sizeof(Trhs));
+
+    OP_REQUIRES_OK(context,
+                   context->allocate_temp(DataTypeToEnum<Trhs>::value,
+                                          weight_tf_shape, &weight_oi_));
+
+    void* weight_oi_t_data = weight.GetTensorBuffer(&weight_oi_);
+    memcpy(weight_oi_t_data, weight_data, weight_size);
+
+    // cache the memory descriptor
+    auto expected_md = matmul_fwd_pd->weights_desc();
+    TensorShape weight_mkl_format;
+    weight_mkl_format.AddDim(sizeof(expected_md) / sizeof(Trhs));
+
+    OP_REQUIRES_OK(context,
+                   context->allocate_temp(DataTypeToEnum<Trhs>::value,
+                                          weight_mkl_format, &weight_oi_md_));
+    *reinterpret_cast<memory::desc*>(weight_oi_md_.flat<Trhs>().data()) =
+        expected_md;
+  }
+
+  Trhs* GetCachedWeight(OpKernelContext* context,
+                           const memory::desc& expected_md)
+      TF_LOCKS_EXCLUDED(mu_) {
+    tf_shared_lock lock(mu_);
+    const Tensor& weight_t = weight_oi_;
+    const Tensor& weight_md_t = weight_oi_md_;
+
+    // Check if the memory descriptor of the cached weight is same as
+    // expected_md. if so use the cached memory, else return NULL
+    if (weight_md_t.flat<Trhs>().size()) {
+      const memory::desc& stored_md =
+          *(static_cast<memory::desc*>(weight_md_t.data()));
+      if (stored_md == expected_md) {
+        return static_cast<Trhs*>(
+            const_cast<Trhs*>(weight_t.flat<Trhs>().data()));
+      }
+    }
+    return nullptr;
+  }
+
   engine cpu_engine_ = engine(engine::kind::cpu, 0);
 
  protected:
+  // Tensor to save reordered weight
+  mutex mu_;
+  Tensor weight_oi_ TF_GUARDED_BY(mu_);
+  Tensor weight_oi_md_ TF_GUARDED_BY(mu_);
+
+
   virtual void ExtendMklMatMulParams(OpKernelContext* ctx,
                                      MklMatMulParams& params) {}
   std::vector<string> fused_ops_;

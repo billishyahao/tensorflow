@@ -704,21 +704,62 @@ class MklMatMulPrimitive : public MklPrimitive {
   };
 
   void Setup(const MklMatMulParams& params) {
+    // std::cout << "hebi-dbg: matmul desc setup begins...\n";
+
     std::shared_ptr<dnnl::primitive> matmul_primitive = nullptr;
 
     // Create MatMul descriptor and primitive descriptor.
-    context_.a_md.reset(new memory::desc({params.a_dims}, MklDnnType<Tlhs>(),
-                                         params.a_strides));
+    // context_.a_md.reset(new memory::desc({params.a_dims}, MklDnnType<Tlhs>(),
+    //                                      params.a_strides));
 
+    // std::cout << "hebi-dbg: params.a_dims: {" ;
+    // for (long d: params.a_dims) {
+    //   std::cout << d << ",";
+    // }
+    // std::cout << " } \n";
+
+    context_.a_md.reset(new memory::desc({params.a_dims}, MklDnnType<Tlhs>(),
+                                         memory::format_tag::abc));
+
+    // context_.b_md.reset(new memory::desc({params.b_dims}, MklDnnType<Trhs>(),
+    //                                      params.b_strides));
+
+    // std::cout << "hebi-dbg: params.b_dims: {" ;
+    // for (long d: params.b_dims) {
+    //   std::cout << d << ",";
+    // }
+    // std::cout << " } \n";
+
+    // context_.b_md.reset(new memory::desc({params.b_dims}, MklDnnType<Trhs>(),
+    //                                      memory::format_tag::any));
+
+    // ok
+    // context_.b_md.reset(new memory::desc({params.b_dims}, MklDnnType<Trhs>(),
+    //                                      memory::format_tag::abc));
+
+
+    // // encouter error
     context_.b_md.reset(new memory::desc({params.b_dims}, MklDnnType<Trhs>(),
-                                         params.b_strides));
+                                         memory::format_tag::any));
+                                         
+
+    // context_.c_md.reset(new memory::desc({params.c_dims}, MklDnnType<Toutput>(),
+    //                                      params.c_strides));
+
+    // std::cout << "hebi-dbg: params.c_dims: {" ;
+    // for (long d: params.c_dims) {
+    //   std::cout << d << ",";
+    // }
+    // std::cout << " } \n";
 
     context_.c_md.reset(new memory::desc({params.c_dims}, MklDnnType<Toutput>(),
-                                         params.c_strides));
+                                         memory::format_tag::abc));                                     
 
     // Create matmul.
     context_.desc.reset(
         new matmul::desc(*context_.a_md, *context_.b_md, *context_.c_md));
+
+    std::cout << "hebi-dbg: matmul desc init done...\n";
 
     // Check if there is any fusion as post-ops
     auto const& post_op_params = params.post_op_params;
@@ -754,16 +795,22 @@ class MklMatMulPrimitive : public MklPrimitive {
     // Create memory primitive based on dummy data.
     context_.a_mem.reset(
         new dnnl::memory(*context_.a_md, cpu_engine_, DummyData));
+
+    auto b_md_plain = memory::desc({params.b_dims}, MklDnnType<Trhs>(), memory::format_tag::abc);
+
     context_.b_mem.reset(
-        new dnnl::memory(*context_.b_md, cpu_engine_, DummyData));
+        new dnnl::memory(b_md_plain, cpu_engine_, DummyData));
     context_.c_mem.reset(
-        new dnnl::memory(*context_.b_md, cpu_engine_, DummyData));
+        new dnnl::memory(*context_.c_md, cpu_engine_, DummyData));
     auto scratchpad_md = context_.prim_desc->scratchpad_desc();
     context_.sp_mem.reset(
         new dnnl::memory(scratchpad_md, cpu_engine_, DummyData));
 
     // Create matmul primitive.
     matmul_primitive.reset(new dnnl::matmul(*context_.prim_desc));
+
+    std::cout << "hebi-dbg: prim desc done...\n";
+
     context_.net_args.push_back({{DNNL_ARG_SRC, *context_.a_mem},
                                  {DNNL_ARG_WEIGHTS, *context_.b_mem},
                                  {DNNL_ARG_SCRATCHPAD, *context_.sp_mem},
